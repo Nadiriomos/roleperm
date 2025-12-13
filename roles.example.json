@@ -1,0 +1,10 @@
+[
+  {
+    "name": "admin",
+    "id": 2,
+    "kdf": "pbkdf2_sha256",
+    "iterations": 200000,
+    "salt": "0123456789abcdef0123456789abcdef",
+    "password_hash": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+  }
+]

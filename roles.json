@@ -1,0 +1,26 @@
+[
+  {
+    "name": "cashier",
+    "id": 1,
+    "kdf": "pbkdf2_sha256",
+    "iterations": 200000,
+    "salt": "6545452f29095cec011198c11c3de8d5",
+    "password_hash": "288b095f7a9727c6567544bada9354bc88ea6d282ae98830ecd7f4ac888d1767"
+  },
+  {
+    "name": "admin",
+    "id": 2,
+    "kdf": "pbkdf2_sha256",
+    "iterations": 200000,
+    "salt": "ba86811820de969d0db45d8dcf03a69d",
+    "password_hash": "7599454c91f6ef1e99276b2a0ad00bbebfacf3d42e8af524f7c8b9643c436d0f"
+  },
+  {
+    "name": "owner",
+    "id": 3,
+    "kdf": "pbkdf2_sha256",
+    "iterations": 200000,
+    "salt": "00e14b4606c75b0b4600bf24be0d95fa",
+    "password_hash": "caa2e869437d18f533ce20c790cb28188608334ca95a3e8e278095008aa14a7a"
+  }
+]
