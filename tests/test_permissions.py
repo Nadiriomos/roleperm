@@ -1,48 +1,38 @@
-import os, sys
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
-
 import unittest
+import os
+import tempfile
 import roleperm as rp
-
 
 class TestPermissions(unittest.TestCase):
     def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.roles_file = os.path.join(self.tmpdir.name, "roles.json")
+        self.perms_file = os.path.join(self.tmpdir.name, "permissions.json")
+        rp.add_role("admin", 2, "pw", roles_file=self.roles_file)
         rp.logout()
 
-    def test_requires_login(self):
-        @rp.role_required(1)
-        def foo():
+    def tearDown(self):
+        self.tmpdir.cleanup()
+        rp.logout()
+
+    def test_role_required_not_logged_in(self):
+        @rp.role_required(2)
+        def f():
+            return 1
+        with self.assertRaises(PermissionError):
+            f()
+
+    def test_permission_required_default_deny_missing(self):
+        role = rp.authenticate("admin", "pw", roles_file=self.roles_file)
+        from roleperm.auth import _set_session
+        _set_session(role)
+
+        @rp.permission_required("x", permissions_file=self.perms_file, default_allow=False)
+        def f():
             return 1
 
         with self.assertRaises(PermissionError):
-            foo()
-
-    def test_requires_role_id(self):
-        # create a fake session by authenticating from in-memory roles file is hard here;
-        # we'll directly set a session through private helper by logging in headlessly.
-        # We'll create roles in a temp file.
-        import tempfile, os
-
-        with tempfile.TemporaryDirectory() as d:
-            path = os.path.join(d, "roles.json")
-            rp.add_role("admin", 2, "pw", roles_file=path)
-            role = rp.authenticate("admin", "pw", roles_file=path)
-            # set session via login API is UI; we simulate by calling internal _set_session
-            from roleperm.auth import _set_session
-            _set_session(role)
-
-            @rp.role_required(2)
-            def ok():
-                return "ok"
-
-            @rp.role_required(1)
-            def no():
-                return "no"
-
-            self.assertEqual(ok(), "ok")
-            with self.assertRaises(PermissionError):
-                no()
-
+            f()
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,71 +1,58 @@
 # roleperm
 
-A **stdlib-only**, lightweight role-permission library for Python desktop apps.
+`roleperm` is a **stdlib-only**, JSON-backed role & permission library for Python desktop apps.
 
-- JSON-backed role storage (portable; no DB required)
-- Optional Tkinter login popup (library never auto-launches UI)
-- Function-level permission enforcement via decorators
-- Passwords stored as **PBKDF2-HMAC** hashes with per-role salts
+- Login with **role name + password** (Tkinter popup optional)
+- Enforce access with decorators that raise `PermissionError`
+- Store roles in `roles.json`
+- Store per-function permissions in **separate** `permissions.json`
+- Password hashing uses **PBKDF2-HMAC-SHA256** (`hashlib.pbkdf2_hmac`)
+
+## Install (editable)
+```bash
+pip install -e .
+```
 
 ## Quick start
-
 ```python
 import roleperm as rp
 
-# One-time setup (creates ./roles.json if missing)
+# bootstrap roles
 rp.add_role("cashier", 1, "cash123")
 rp.add_role("admin", 2, "admin123")
 
-# Optional login popup
+# optional login UI
 rp.login(title="My App Login")
 
 @rp.role_required(2)
-def delete_product():
-    print("deleted")
+def admin_hard_rule():
+    print("Only role_id=2 can run this")
+
+@rp.permission_key("view_stock", label="View Stock")
+@rp.permission_required("view_stock")
+def view_stock():
+    print("Allowed roles are configurable in permissions.json")
+
+view_stock()
 ```
 
-## Design rules (stable contract)
+## Admin panel (Tkinter)
+`open_admin_panel()` opens a small tabbed UI:
 
-- **Login uses role name** (the username field is the role name).
-- Role name is used to locate the record; **permissions are enforced by role ID**.
-- Unauthorized calls **raise `PermissionError`** (never silent).
-- Stdlib only (no external dependencies).
-
-## roles.json format
-
-Example:
-
-```json
-[
-  {
-    "name": "admin",
-    "id": 2,
-    "kdf": "pbkdf2_sha256",
-    "iterations": 200000,
-    "salt": "hexsalt...",
-    "password_hash": "hexhash..."
-  }
-]
-```
-
-## Validate roles.json
-
-If you want to sanity-check a roles file (duplicates, missing fields, bad types, weak PBKDF2 params), call:
+- **Roles**: add/edit/delete roles
+- **Permissions**: pick a registered permission key and toggle allowed roles
 
 ```python
 import roleperm as rp
 
-rp.validate_roles_file("roles.json")
+rp.open_admin_panel(
+    roles_file="roles.json",
+    permissions_file="permissions.json",
+    manager_role_ids=None,           # None = any valid login may manage
+    require_reauth=True              # prompts for password again
+)
 ```
 
-On failure it raises `rp.RolesValidationError` with a readable list of issues.
-
-## Running the demo
-
-```bash
-python -m roleperm.example_app
-```
-
-## License
-
-MIT
+## Defaults
+- `permission_required()` is **default-deny** when a key is missing from `permissions.json`.
+  You can override with `default_allow=True` per decorator call.
