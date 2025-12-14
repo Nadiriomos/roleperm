@@ -1,13 +1,9 @@
-import time
-import unittest
-
-def main() -> int:
-    start = time.perf_counter()
-    suite = unittest.defaultTestLoader.discover("tests")
-    result = unittest.TextTestRunner(verbosity=2).run(suite)
-    elapsed = time.perf_counter() - start
-    print(f"\nTook: {elapsed:.3f}s")
-    return 0 if result.wasSuccessful() else 1
-
-if __name__ == "__main__":
+import time, unittest
+def main():
+    t0=time.perf_counter()
+    suite=unittest.defaultTestLoader.discover("tests")
+    res=unittest.TextTestRunner(verbosity=2).run(suite)
+    print(f"\nTook: {time.perf_counter()-t0:.3f}s")
+    return 0 if res.wasSuccessful() else 1
+if __name__=="__main__":
     raise SystemExit(main())

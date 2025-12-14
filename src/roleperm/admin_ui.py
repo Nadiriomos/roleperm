@@ -1,46 +1,84 @@
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
-from .auth import DEFAULT_ROLES_FILE, authenticate, get_roles, add_role, edit_role, delete_role
-from .permissions import DEFAULT_PERMISSIONS_FILE, list_registered_permissions
+from .auth import authenticate, get_roles, add_role, edit_role, delete_role, current_role_id, _set_session
+from .config import resolve_roles_file, resolve_permissions_file
+from .permissions import list_registered_permissions, check_permission_for_role_id, permission_key, OWNER_ID
 from .perm_storage import load_permissions, save_permissions
 from .validators import validate_permissions_data, PermissionsValidationError
+from .storage import roles_exist
+from .ui import _owner_first_run_setup, login as login_popup
 
-def open_admin_panel(*, roles_file: str = DEFAULT_ROLES_FILE, permissions_file: str = DEFAULT_PERMISSIONS_FILE,
-                     manager_role_ids: Optional[List[int]] = None, require_reauth: bool = True,
-                     title: str = "RolePerm Admin") -> None:
+MANAGE_PERMISSION_KEY = "roleperm.manage"
+MANAGE_PERMISSION_LABEL = "Manage Roles & Permissions"
+
+permission_key(MANAGE_PERMISSION_KEY, label=MANAGE_PERMISSION_LABEL)(lambda: None)
+
+def open_admin_panel(
+    *,
+    roles_file: Optional[str] = None,
+    permissions_file: Optional[str] = None,
+    require_reauth: bool = False,
+    title: str = "RolePerm Admin",
+    default_allow_manage: bool = True,
+) -> bool:
+    """Open admin panel (foolproof)."""
     import tkinter as tk
     from tkinter import ttk, messagebox, simpledialog
 
-    if require_reauth:
-        auth_root = tk.Tk()
-        auth_root.withdraw()
-        try:
-            u = simpledialog.askstring("Re-authenticate", "Username (role name):", parent=auth_root)
-            if u is None:
-                return
-            p = simpledialog.askstring("Re-authenticate", "Password:", parent=auth_root, show="*")
-            if p is None:
-                return
-            role = authenticate(u.strip(), p, roles_file=roles_file)
-            if manager_role_ids is not None and role.id not in set(manager_role_ids):
-                messagebox.showerror("Access denied", "You are not allowed to open the admin panel.")
-                return
-        except ValueError as e:
-            messagebox.showerror("Authentication failed", str(e))
-            return
-        finally:
-            auth_root.destroy()
+    rpath = resolve_roles_file(roles_file)
+    ppath = resolve_permissions_file(permissions_file)
+
+    if not roles_exist(rpath):
+        owner = _owner_first_run_setup(rpath, title=title)
+        if owner is None:
+            return False
+        role_id = OWNER_ID
+    else:
+        if require_reauth:
+            auth_root = tk.Tk()
+            auth_root.withdraw()
+            try:
+                u = simpledialog.askstring("Admin Panel", "Username (role name):", parent=auth_root)
+                if u is None:
+                    return False
+                p = simpledialog.askstring("Admin Panel", "Password:", parent=auth_root, show="*")
+                if p is None:
+                    return False
+                role = authenticate(u.strip(), p, roles_file=rpath)
+                _set_session(role)
+                role_id = role.id
+            except ValueError as e:
+                messagebox.showerror("Authentication failed", str(e))
+                return False
+            finally:
+                auth_root.destroy()
+        else:
+            role_id = current_role_id()
+            if role_id is None:
+                role = login_popup(title=title, roles_file=rpath, owner_setup=True)
+                if role is None:
+                    return False
+                role_id = role.id
+
+    if role_id != OWNER_ID:
+        ok = check_permission_for_role_id(
+            role_id,
+            MANAGE_PERMISSION_KEY,
+            permissions_file=ppath,
+            default_allow_missing=default_allow_manage,
+        )
+        if not ok:
+            return False
 
     root = tk.Tk()
     root.title(title)
-    root.geometry("760x460")
+    root.geometry("740x460")
 
     nb = ttk.Notebook(root)
     nb.pack(fill="both", expand=True, padx=8, pady=8)
 
-    # Roles tab
     roles_frame = ttk.Frame(nb)
     nb.add(roles_frame, text="Roles")
 
@@ -52,16 +90,16 @@ def open_admin_panel(*, roles_file: str = DEFAULT_ROLES_FILE, permissions_file: 
 
     def refresh_roles():
         roles_list.delete(0, tk.END)
-        for r in get_roles(roles_file=roles_file):
+        for r in get_roles(roles_file=rpath):
             roles_list.insert(tk.END, f"{r.id}  |  {r.name}")
 
-    def get_selected_role_id() -> Optional[int]:
+    def selected_role_id() -> Optional[int]:
         sel = roles_list.curselection()
         if not sel:
             return None
-        text = roles_list.get(sel[0])
+        txt = roles_list.get(sel[0])
         try:
-            return int(text.split("|")[0].strip())
+            return int(txt.split("|")[0].strip())
         except Exception:
             return None
 
@@ -70,23 +108,48 @@ def open_admin_panel(*, roles_file: str = DEFAULT_ROLES_FILE, permissions_file: 
             rid = simpledialog.askinteger("Add Role", "Role ID (integer):", parent=root, minvalue=0)
             if rid is None:
                 return
+            if rid == OWNER_ID:
+                messagebox.showerror("Not allowed", "Role ID 0 is reserved for the default owner.")
+                return
             name = simpledialog.askstring("Add Role", "Role name:", parent=root)
             if name is None:
                 return
             pw = simpledialog.askstring("Add Role", "Password:", parent=root, show="*")
             if pw is None:
                 return
-            add_role(name, rid, pw, roles_file=roles_file)
+            add_role(name, rid, pw, roles_file=rpath)
             refresh_roles()
             messagebox.showinfo("Success", "Role added.")
         except Exception as e:
             messagebox.showerror("Error", str(e))
 
     def edit_role_ui():
-        rid = get_selected_role_id()
+        rid = selected_role_id()
         if rid is None:
             messagebox.showinfo("Select role", "Please select a role.")
             return
+
+        if rid == OWNER_ID:
+            reset = messagebox.askyesno("Owner password", "Reset OWNER password?")
+            if not reset:
+                return
+            pw1 = simpledialog.askstring("Owner password", "New OWNER password:", parent=root, show="*")
+            if pw1 is None or pw1 == "":
+                return
+            pw2 = simpledialog.askstring("Owner password", "Confirm OWNER password:", parent=root, show="*")
+            if pw2 is None:
+                return
+            if pw1 != pw2:
+                messagebox.showerror("Mismatch", "Passwords do not match.")
+                return
+            try:
+                edit_role(OWNER_ID, new_password=pw1, roles_file=rpath)
+                refresh_roles()
+                messagebox.showinfo("Success", "Owner password updated.")
+            except Exception as e:
+                messagebox.showerror("Error", str(e))
+            return
+
         try:
             new_name = simpledialog.askstring("Edit Role", "New role name (leave blank to keep):", parent=root)
             if new_name is not None and new_name.strip() == "":
@@ -94,24 +157,34 @@ def open_admin_panel(*, roles_file: str = DEFAULT_ROLES_FILE, permissions_file: 
             reset = messagebox.askyesno("Reset password", "Reset password for this role?")
             new_pw = None
             if reset:
-                new_pw = simpledialog.askstring("Reset password", "New password:", parent=root, show="*")
-                if new_pw is None:
+                pw1 = simpledialog.askstring("Reset password", "New password:", parent=root, show="*")
+                if pw1 is None or pw1 == "":
                     return
-            edit_role(rid, new_name=new_name, new_password=new_pw, roles_file=roles_file)
+                pw2 = simpledialog.askstring("Reset password", "Confirm password:", parent=root, show="*")
+                if pw2 is None:
+                    return
+                if pw1 != pw2:
+                    messagebox.showerror("Mismatch", "Passwords do not match.")
+                    return
+                new_pw = pw1
+            edit_role(rid, new_name=new_name, new_password=new_pw, roles_file=rpath)
             refresh_roles()
             messagebox.showinfo("Success", "Role updated.")
         except Exception as e:
             messagebox.showerror("Error", str(e))
 
     def delete_role_ui():
-        rid = get_selected_role_id()
+        rid = selected_role_id()
         if rid is None:
             messagebox.showinfo("Select role", "Please select a role.")
+            return
+        if rid == OWNER_ID:
+            messagebox.showerror("Not allowed", "The default owner role cannot be deleted.")
             return
         if not messagebox.askyesno("Confirm delete", f"Delete role id {rid}?"):
             return
         try:
-            delete_role(rid, roles_file=roles_file)
+            delete_role(rid, roles_file=rpath)
             refresh_roles()
             messagebox.showinfo("Success", "Role deleted.")
         except Exception as e:
@@ -122,7 +195,6 @@ def open_admin_panel(*, roles_file: str = DEFAULT_ROLES_FILE, permissions_file: 
     ttk.Button(roles_btns, text="Edit", command=edit_role_ui).pack(fill="x", pady=3)
     ttk.Button(roles_btns, text="Delete", command=delete_role_ui).pack(fill="x", pady=3)
 
-    # Permissions tab
     perms_frame = ttk.Frame(nb)
     nb.add(perms_frame, text="Permissions")
 
@@ -158,8 +230,8 @@ def open_admin_panel(*, roles_file: str = DEFAULT_ROLES_FILE, permissions_file: 
             child.destroy()
         vars_by_role.clear()
 
-        roles = get_roles(roles_file=roles_file)
-        data = load_permissions(permissions_file)
+        roles = get_roles(roles_file=rpath)
+        data = load_permissions(ppath)
         try:
             validate_permissions_data(data)
         except PermissionsValidationError as e:
@@ -191,7 +263,7 @@ def open_admin_panel(*, roles_file: str = DEFAULT_ROLES_FILE, permissions_file: 
             messagebox.showinfo("Select permission", "Select a permission first.")
             return
 
-        data = load_permissions(permissions_file)
+        data = load_permissions(ppath)
         data.setdefault("permissions", {})
         reg = list_registered_permissions()
         label = reg.get(current_key).label if current_key in reg else current_key
@@ -205,7 +277,7 @@ def open_admin_panel(*, roles_file: str = DEFAULT_ROLES_FILE, permissions_file: 
             messagebox.showerror("Validation error", str(e))
             return
 
-        save_permissions(permissions_file, data)
+        save_permissions(ppath, data)
         messagebox.showinfo("Saved", f"Saved permissions for '{current_key}'.")
 
     ttk.Button(right, text="Save changes", command=save_current_permission).pack(anchor="e", padx=6, pady=(0, 6))
@@ -214,3 +286,4 @@ def open_admin_panel(*, roles_file: str = DEFAULT_ROLES_FILE, permissions_file: 
     refresh_roles()
     refresh_permissions_list()
     root.mainloop()
+    return True

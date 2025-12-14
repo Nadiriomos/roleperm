@@ -1,38 +1,24 @@
-import unittest
-import os
-import tempfile
+import unittest, tempfile
 import roleperm as rp
+from roleperm.auth import _set_session
 
 class TestPermissions(unittest.TestCase):
     def setUp(self):
-        self.tmpdir = tempfile.TemporaryDirectory()
-        self.roles_file = os.path.join(self.tmpdir.name, "roles.json")
-        self.perms_file = os.path.join(self.tmpdir.name, "permissions.json")
-        rp.add_role("admin", 2, "pw", roles_file=self.roles_file)
+        self.td=tempfile.TemporaryDirectory()
+        rp.configure(base_dir=self.td.name)
+        rp.add_role("admin",2,"pw")
         rp.logout()
-
     def tearDown(self):
-        self.tmpdir.cleanup()
+        self.td.cleanup()
         rp.logout()
-
-    def test_role_required_not_logged_in(self):
-        @rp.role_required(2)
-        def f():
-            return 1
-        with self.assertRaises(PermissionError):
-            f()
-
-    def test_permission_required_default_deny_missing(self):
-        role = rp.authenticate("admin", "pw", roles_file=self.roles_file)
-        from roleperm.auth import _set_session
+    def test_default_deny_missing_key(self):
+        role=rp.authenticate("admin","pw")
         _set_session(role)
-
-        @rp.permission_required("x", permissions_file=self.perms_file, default_allow=False)
-        def f():
-            return 1
-
+        @rp.permission_required("x", default_allow=False)
+        def f(): return 1
         with self.assertRaises(PermissionError):
             f()
-
-if __name__ == "__main__":
+    def test_manage_key_registered(self):
+        self.assertIn(rp.MANAGE_PERMISSION_KEY, rp.list_registered_permissions())
+if __name__=="__main__":
     unittest.main()

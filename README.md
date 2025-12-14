@@ -1,58 +1,23 @@
-# roleperm
+# roleperm (v0.2.3)
 
-`roleperm` is a **stdlib-only**, JSON-backed role & permission library for Python desktop apps.
+Stdlib-only, JSON-backed role & permission enforcement for Python desktop apps.
 
-- Login with **role name + password** (Tkinter popup optional)
-- Enforce access with decorators that raise `PermissionError`
-- Store roles in `roles.json`
-- Store per-function permissions in **separate** `permissions.json`
-- Password hashing uses **PBKDF2-HMAC-SHA256** (`hashlib.pbkdf2_hmac`)
+## Seamless defaults
+Calling `login(app_name="MyApp")` stores files in:
 
-## Install (editable)
-```bash
-pip install -e .
-```
+- `./roleperm/roles.json`
+- `./roleperm/permissions.json`
 
-## Quick start
-```python
-import roleperm as rp
+No `state.json`. Session stays in memory.
 
-# bootstrap roles
-rp.add_role("cashier", 1, "cash123")
-rp.add_role("admin", 2, "admin123")
+## Login behavior
+- If **no roles exist**, `login()` returns `None` and shows **no popup** (no crash).
+- If user closes the popup, `login()` returns `None`.
+- On success, `login()` returns a `Role` and sets session in memory.
 
-# optional login UI
-rp.login(title="My App Login")
+## Admin panel access is a permission
+Admin panel is guarded by `roleperm.manage` (editable in permissions.json).
 
-@rp.role_required(2)
-def admin_hard_rule():
-    print("Only role_id=2 can run this")
 
-@rp.permission_key("view_stock", label="View Stock")
-@rp.permission_required("view_stock")
-def view_stock():
-    print("Allowed roles are configurable in permissions.json")
-
-view_stock()
-```
-
-## Admin panel (Tkinter)
-`open_admin_panel()` opens a small tabbed UI:
-
-- **Roles**: add/edit/delete roles
-- **Permissions**: pick a registered permission key and toggle allowed roles
-
-```python
-import roleperm as rp
-
-rp.open_admin_panel(
-    roles_file="roles.json",
-    permissions_file="permissions.json",
-    manager_role_ids=None,           # None = any valid login may manage
-    require_reauth=True              # prompts for password again
-)
-```
-
-## Defaults
-- `permission_required()` is **default-deny** when a key is missing from `permissions.json`.
-  You can override with `default_allow=True` per decorator call.
+## Corrupt/empty JSON recovery
+If roles.json or permissions.json are empty or invalid JSON, roleperm will back them up and recreate fresh defaults.
