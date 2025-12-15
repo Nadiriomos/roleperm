@@ -60,6 +60,8 @@ def role_required(role_id: int):
     return deco
 
 def check_permission_for_role_id(role_id: int, key: str, *, permissions_file: Optional[str]=None, default_allow_missing: bool=False)->bool:
+    if role_id == OWNER_ID:
+        return True
     if not isinstance(role_id,int): return False
     path=resolve_permissions_file(permissions_file)
     data=load_permissions(path)
@@ -77,7 +79,10 @@ def permission_required(key: str, *, permissions_file: Optional[str]=None, defau
         @wraps(func)
         def wrapper(*args,**kwargs):
             rid=current_role_id()
-            if rid is None: raise PermissionError("Not logged in.")
+            if rid is None: 
+                raise PermissionError("Not logged in.")
+            if rid == OWNER_ID:
+                return func(*args, **kwargs)
             if not check_permission_for_role_id(rid, key, permissions_file=permissions_file, default_allow_missing=default_allow):
                 r=current_role(); name=r.name if r else "unknown"
                 raise PermissionError(f"Unauthorized: role '{name}' (id={rid}) cannot access permission '{key}'.")
