@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "roleperm"
-version = "0.2.3"
+version = "0.2.4"
 description = "Lightweight, JSON-backed role & permission enforcement for Python desktop apps (stdlib-only)."
 readme = "README.md"
 requires-python = ">=3.9"

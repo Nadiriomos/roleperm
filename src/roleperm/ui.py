@@ -18,11 +18,18 @@ def _owner_exists(roles_path: str) -> bool:
         return False
     return False
 
-def _owner_first_run_setup(roles_path: str, *, title: str) -> Optional[Role]:
-    """Ensure owner role exists by prompting for password (password + confirm).
+def _only_owner_exists(roles_path: str) -> bool:
+    try:
+        recs = load_role_records(roles_path)
+        if not recs:
+            return False
+        ids = [int(r.id) for r in recs]
+        return len(ids) == 1 and ids[0] == OWNER_ID
+    except Exception:
+        return False
 
-    Returns owner Role on success, None on cancel.
-    """
+def _owner_password_prompt(roles_path: str, *, title: str) -> Optional[Role]:
+    """Ask for owner password ONLY (no username), authenticate, set session."""
     try:
         import tkinter as tk
         from tkinter import messagebox, simpledialog
@@ -36,10 +43,41 @@ def _owner_first_run_setup(roles_path: str, *, title: str) -> Optional[Role]:
 
     root.withdraw()
     try:
-        pw1 = simpledialog.askstring(title, "Set OWNER password:", parent=root, show="*")
+        pw = simpledialog.askstring(title, "Master password:", parent=root, show="*")
+        if pw is None or pw == "":
+            return None
+        try:
+            role = authenticate(OWNER_NAME, pw, roles_file=roles_path)
+            _set_session(role)
+            return role
+        except ValueError as e:
+            messagebox.showerror("Login failed", str(e))
+            return None
+    finally:
+        try:
+            root.destroy()
+        except Exception:
+            pass
+
+def _owner_first_run_setup(roles_path: str, *, title: str) -> Optional[Role]:
+    """First run: ask to create master password (password + confirm)."""
+    try:
+        import tkinter as tk
+        from tkinter import messagebox, simpledialog
+    except Exception:
+        return None
+
+    try:
+        root = tk.Tk()
+    except Exception:
+        return None
+
+    root.withdraw()
+    try:
+        pw1 = simpledialog.askstring(title, "Create master password:", parent=root, show="*")
         if pw1 is None or pw1 == "":
             return None
-        pw2 = simpledialog.askstring(title, "Confirm OWNER password:", parent=root, show="*")
+        pw2 = simpledialog.askstring(title, "Confirm master password:", parent=root, show="*")
         if pw2 is None:
             return None
         if pw1 != pw2:
@@ -72,29 +110,31 @@ def login(
     logo_text: Optional[str] = None,
     owner_setup: bool = True,
 ) -> Optional[Role]:
-    """Show login popup and store session in memory (foolproof)."""
+    """Login (seamless, owner rules)."""
     if app_name is not None:
         configure(app_name=app_name)
 
     path = resolve_roles_file(roles_file)
 
-    has_roles = roles_exist(path)
-
-    if owner_setup and (not has_roles or not _owner_exists(path)):
+    # If no roles OR owner missing -> bootstrap owner
+    if owner_setup and (not roles_exist(path) or not _owner_exists(path)):
         owner = _owner_first_run_setup(path, title=title)
         if owner is None:
             return None
-        try:
-            records = load_role_records(path)
-            others = [r for r in records if int(r.id) != OWNER_ID]
-        except Exception:
-            others = []
-        if not others:
-            return owner
 
     if not roles_exist(path):
         return None
 
+    # If only owner exists -> password-only prompt (no username field)
+    if _only_owner_exists(path):
+        # OPTION B (insecure but seamless):
+        # If only owner exists, auto-login as owner with no password prompt.
+        from .auth import Role, _set_session
+        owner = Role(name=OWNER_NAME, id=OWNER_ID)
+        _set_session(owner)
+        return owner
+
+    # Otherwise show username/password login
     try:
         import tkinter as tk
         from tkinter import messagebox

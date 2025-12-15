@@ -1,4 +1,4 @@
-# roleperm (v0.2.3)
+# roleperm (v0.2.4)
 
 Stdlib-only, JSON-backed role & permission enforcement for Python desktop apps.
 

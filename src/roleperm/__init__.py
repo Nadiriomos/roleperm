@@ -6,7 +6,7 @@ from .admin_ui import open_admin_panel, MANAGE_PERMISSION_KEY, MANAGE_PERMISSION
 from .validators import RolesValidationError, PermissionsValidationError, validate_roles_data, validate_permissions_data
 import json
 
-__version__ = "0.2.3"
+__version__ = "0.2.4"
 
 __all__=[
     "configure","get_paths","Role","authenticate","login","logout","current_role","current_role_id","current_username",
