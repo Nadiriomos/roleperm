@@ -28,6 +28,9 @@ def permission_key(key: str, *, label: Optional[str]=None):
     key=key.strip()
     def deco(func: Callable)->Callable:
         lab = label.strip() if isinstance(label,str) and label.strip() else key
+        if key in _PERMISSION_REGISTRY:
+            # Ignore duplicate registrations (library-defined keys stay authoritative)
+            return func
         _PERMISSION_REGISTRY[key]=PermissionMeta(key=key,label=lab,qualname=getattr(func,"__qualname__",func.__name__),module=getattr(func,"__module__",""))
         setattr(func,"__roleperm_permission_key__",key)
         setattr(func,"__roleperm_permission_label__",lab)

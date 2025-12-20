@@ -127,9 +127,6 @@ def login(
 
     # If only owner exists -> password-only prompt (no username field)
     if _only_owner_exists(path):
-        # OPTION B (insecure but seamless):
-        # If only owner exists, auto-login as owner with no password prompt.
-        from .auth import Role, _set_session
         owner = Role(name=OWNER_NAME, id=OWNER_ID)
         _set_session(owner)
         return owner

@@ -22,6 +22,9 @@ def open_admin_panel(
     require_reauth: bool = False,
     title: str = "RolePerm Admin",
     default_allow_manage: bool = True,
+    parent=None,
+    mode: str = "popup",
+    ui: str = "tk",
 ) -> bool:
     """Admin panel (owner never blocked + owner hidden)."""
     import tkinter as tk
@@ -29,6 +32,14 @@ def open_admin_panel(
 
     rpath = resolve_roles_file(roles_file)
     ppath = resolve_permissions_file(permissions_file)
+
+    data = load_permissions(ppath)
+    data.setdefault("permissions", {})
+    data["permissions"].setdefault(
+        MANAGE_PERMISSION_KEY,
+        {"label": MANAGE_PERMISSION_LABEL, "allowed_role_ids": []},
+    )
+    save_permissions(ppath, data)
 
     if not roles_exist(rpath):
         owner = _owner_first_run_setup(rpath, title=title)
@@ -73,9 +84,70 @@ def open_admin_panel(
         if not ok:
             return False
 
-    root = tk.Tk()
-    root.title(title)
-    root.geometry("760x480")
+    # ---- UI dispatch (UI ONLY). Keep all auth/permission logic above unchanged. ----
+    embedded = (mode == "embed")
+    ui_norm = (ui or "tk").strip().lower()
+
+    if ui_norm in ("ctk", "customtkinter"):
+        from .admin_ui_ctk import show_admin_panel_ctk  # must exist
+
+        try:
+            return show_admin_panel_ctk(
+                rpath=rpath,
+                ppath=ppath,
+                title=title,
+                embedded=embedded,
+                parent=parent,
+            )
+        except ImportError:
+            # Missing optional dependency should be loud and clear.
+            raise
+        except Exception:
+            # If embedding fails for any reason, silently fallback to popup (your rule).
+            if embedded:
+                return show_admin_panel_ctk(
+                    rpath=rpath,
+                    ppath=ppath,
+                    title=title,
+                    embedded=False,
+                    parent=None,
+                )
+            raise
+
+    if ui_norm in ("qt", "pyside6", "pyside", "qt6"):
+        from .admin_ui_qt import show_admin_panel_pyside6  # must exist
+
+        try:
+            return show_admin_panel_pyside6(
+                rpath=rpath,
+                ppath=ppath,
+                title=title,
+                embedded=embedded,
+                parent=parent,
+            )
+        except ImportError:
+            raise
+        except Exception:
+            if embedded:
+                return show_admin_panel_pyside6(
+                    rpath=rpath,
+                    ppath=ppath,
+                    title=title,
+                    embedded=False,
+                    parent=None,
+                )
+            raise
+
+    if mode == "embed":
+        if parent is None:
+            raise ValueError("Embed mode requires parent=...")
+
+        root = ttk.Frame(parent)
+        root.pack(fill="both", expand=True)
+    else:
+        root = tk.Tk()
+        root.title(title)
+        root.geometry("760x480")
 
     nb = ttk.Notebook(root)
     nb.pack(fill="both", expand=True, padx=8, pady=8)
@@ -108,6 +180,9 @@ def open_admin_panel(
             return None
 
     def reset_owner_password():
+        if role_id != OWNER_ID:
+            messagebox.showerror("Access denied", "Only the Owner can reset the Owner password.")
+            return
         pw1 = simpledialog.askstring("owner password", "New owner password:", parent=root, show="*")
         if pw1 is None or pw1 == "":
             return
@@ -216,12 +291,16 @@ def open_admin_panel(
 
     vars_by_role: Dict[int, tk.IntVar] = {}
     current_key: Optional[str] = None
+    perm_keys: list[str] = []
 
     def refresh_permissions_list():
         perms_list.delete(0, tk.END)
+        perm_keys.clear()
+
         reg = list_registered_permissions()
         for key, meta in sorted(reg.items(), key=lambda kv: kv[0]):
-            perms_list.insert(tk.END, f"{key}  |  {meta.label}")
+            perm_keys.append(key)
+            perms_list.insert(tk.END, meta.label)
 
     def load_roles_checkboxes(selected_key: str):
         nonlocal current_key
@@ -242,21 +321,27 @@ def open_admin_panel(
         allowed = set()
         rec = data.get("permissions", {}).get(selected_key)
         if rec and isinstance(rec, dict):
-            allowed = set(int(x) for x in rec.get("allowed_role_ids", []) if isinstance(x, int))
+            raw_allowed = rec.get("allowed_role_ids", [])
+            allowed = set(int(x) for x in raw_allowed if isinstance(x, (int, str)) and str(x).strip().isdigit())
+
 
         for r in roles:
-            v = tk.IntVar(value=1 if r.id in allowed else 0)
+            v = tk.IntVar(master=root, value=1 if r.id in allowed else 0)
             vars_by_role[r.id] = v
             ttk.Checkbutton(roles_checks_frame, text=f"{r.id} | {r.name}", variable=v).pack(anchor="w", padx=8, pady=2)
 
-        status.config(text=f"Editing: {selected_key}")
+        reg = list_registered_permissions()
+        label = reg.get(selected_key).label if selected_key in reg else selected_key
+        status.config(text=f"Editing: {label}")
 
     def on_select_permission(_event=None):
         sel = perms_list.curselection()
         if not sel:
             return
-        text = perms_list.get(sel[0])
-        key = text.split("|")[0].strip()
+        idx = sel[0]
+        if idx < 0 or idx >= len(perm_keys):
+            return
+        key = perm_keys[idx]
         load_roles_checkboxes(key)
 
     def save_current_permission():
@@ -279,12 +364,13 @@ def open_admin_panel(
             return
 
         save_permissions(ppath, data)
-        messagebox.showinfo("Saved", f"Saved permissions for '{current_key}'.")
+        messagebox.showinfo("Saved", f"Saved permissions for '{label}'.")
 
     ttk.Button(right, text="Save changes", command=save_current_permission).pack(anchor="e", padx=6, pady=(0, 6))
     perms_list.bind("<<ListboxSelect>>", on_select_permission)
 
     refresh_roles()
     refresh_permissions_list()
-    root.mainloop()
+    if mode != "embed":
+        root.mainloop()
     return True
