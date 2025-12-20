@@ -2,12 +2,11 @@ from __future__ import annotations
 
 from typing import Optional
 
-from .auth import authenticate, _set_session, Role, add_role
+from .auth import Role, _set_session, add_role, authenticate
 from .config import configure, resolve_roles_file
-from .storage import roles_exist, load_role_records
+from .constants import OWNER_ID, OWNER_NAME
+from .storage import load_role_records, roles_exist
 
-OWNER_NAME = "owner"
-OWNER_ID = 0
 
 def _owner_exists(roles_path: str) -> bool:
     try:
@@ -18,6 +17,7 @@ def _owner_exists(roles_path: str) -> bool:
         return False
     return False
 
+
 def _only_owner_exists(roles_path: str) -> bool:
     try:
         recs = load_role_records(roles_path)
@@ -27,6 +27,7 @@ def _only_owner_exists(roles_path: str) -> bool:
         return len(ids) == 1 and ids[0] == OWNER_ID
     except Exception:
         return False
+
 
 def _owner_password_prompt(roles_path: str, *, title: str) -> Optional[Role]:
     """Ask for owner password ONLY (no username), authenticate, set session."""
@@ -58,6 +59,7 @@ def _owner_password_prompt(roles_path: str, *, title: str) -> Optional[Role]:
             root.destroy()
         except Exception:
             pass
+
 
 def _owner_first_run_setup(roles_path: str, *, title: str) -> Optional[Role]:
     """First run: ask to create master password (password + confirm)."""
@@ -102,6 +104,7 @@ def _owner_first_run_setup(roles_path: str, *, title: str) -> Optional[Role]:
         except Exception:
             pass
 
+
 def login(
     *,
     title: str = "Login",
@@ -110,7 +113,12 @@ def login(
     logo_text: Optional[str] = None,
     owner_setup: bool = True,
 ) -> Optional[Role]:
-    """Login (seamless, owner rules)."""
+    """Login (seamless, owner rules).
+
+    Notes:
+        - If owner_setup is enabled and roles are missing/corrupt, it will bootstrap Owner.
+        - If *only* Owner exists, it will show a password-only prompt.
+    """
     if app_name is not None:
         configure(app_name=app_name)
 
@@ -127,9 +135,7 @@ def login(
 
     # If only owner exists -> password-only prompt (no username field)
     if _only_owner_exists(path):
-        owner = Role(name=OWNER_NAME, id=OWNER_ID)
-        _set_session(owner)
-        return owner
+        return _owner_password_prompt(path, title=title)
 
     # Otherwise show username/password login
     try:
@@ -151,7 +157,9 @@ def login(
     frame.pack()
 
     if logo_text:
-        tk.Label(frame, text=logo_text, font=("Arial", 14, "bold")).grid(row=0, column=0, columnspan=2, pady=(0, 10))
+        tk.Label(frame, text=logo_text, font=("Arial", 14, "bold")).grid(
+            row=0, column=0, columnspan=2, pady=(0, 10)
+        )
 
     tk.Label(frame, text="Username").grid(row=1, column=0, sticky="e", padx=(0, 8), pady=4)
     username = tk.Entry(frame, width=28)

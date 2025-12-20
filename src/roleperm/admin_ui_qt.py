@@ -4,7 +4,8 @@ from __future__ import annotations
 from typing import Dict, Optional
 
 from .auth import get_roles, add_role, edit_role, delete_role
-from .permissions import list_registered_permissions, OWNER_ID
+from .constants import OWNER_ID
+from .permissions import list_registered_permissions
 from .perm_storage import load_permissions, save_permissions
 from .validators import validate_permissions_data, PermissionsValidationError
 

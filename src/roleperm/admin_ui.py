@@ -1,19 +1,61 @@
 from __future__ import annotations
 
-from typing import Dict, Optional
+from typing import Optional
 
-from .auth import authenticate, get_roles, add_role, edit_role, delete_role, current_role_id, _set_session
-from .config import resolve_roles_file, resolve_permissions_file
-from .permissions import list_registered_permissions, check_permission_for_role_id, permission_key, OWNER_ID
+from .auth import _set_session, authenticate, current_role_id
+from .config import resolve_permissions_file, resolve_roles_file
+from .constants import MANAGE_PERMISSION_KEY, MANAGE_PERMISSION_LABEL, OWNER_ID
 from .perm_storage import load_permissions, save_permissions
-from .validators import validate_permissions_data, PermissionsValidationError
+from .permissions import check_permission_for_role_id, list_registered_permissions, permission_key
 from .storage import roles_exist
-from .ui import _owner_first_run_setup, login as login_popup, _only_owner_exists
+from .ui import _only_owner_exists, _owner_first_run_setup, login as login_popup
 
-MANAGE_PERMISSION_KEY = "roleperm.manage"
-MANAGE_PERMISSION_LABEL = "Manage Roles & Permissions"
-
+# Ensure the manage permission shows up in the registry.
 permission_key(MANAGE_PERMISSION_KEY, label=MANAGE_PERMISSION_LABEL)(lambda: None)
+
+
+def _ensure_manage_permission_record(permissions_path: str) -> None:
+    data = load_permissions(permissions_path)
+    data.setdefault("permissions", {})
+    data["permissions"].setdefault(
+        MANAGE_PERMISSION_KEY,
+        {"label": MANAGE_PERMISSION_LABEL, "allowed_role_ids": []},
+    )
+    save_permissions(permissions_path, data)
+
+
+def _popup_reauth(*, title: str, roles_path: str) -> Optional[int]:
+    """Username/password prompt used when require_reauth=True.
+
+    This uses Tk dialogs to keep the dependency minimal and optional.
+    """
+    try:
+        import tkinter as tk
+        from tkinter import messagebox, simpledialog
+    except Exception as e:  # pragma: no cover
+        raise ImportError("Tkinter is required for require_reauth popups.") from e
+
+    auth_root = tk.Tk()
+    auth_root.withdraw()
+    try:
+        u = simpledialog.askstring(title, "Username (role name):", parent=auth_root)
+        if u is None:
+            return None
+        p = simpledialog.askstring(title, "Password:", parent=auth_root, show="*")
+        if p is None:
+            return None
+        role = authenticate(u.strip(), p, roles_file=roles_path)
+        _set_session(role)
+        return role.id
+    except ValueError as e:
+        messagebox.showerror("Authentication failed", str(e))
+        return None
+    finally:
+        try:
+            auth_root.destroy()
+        except Exception:
+            pass
+
 
 def open_admin_panel(
     *,
@@ -26,45 +68,32 @@ def open_admin_panel(
     mode: str = "popup",
     ui: str = "tk",
 ) -> bool:
-    """Admin panel (owner never blocked + owner hidden)."""
-    import tkinter as tk
-    from tkinter import ttk, messagebox, simpledialog
+    """Open the admin panel.
+
+    Design notes:
+        - All auth/permission checks happen before any UI is shown.
+        - Tkinter is only imported if we actually need the Tk UI or Tk dialogs.
+        - Owner is never blocked and is hidden from role lists.
+    """
 
     rpath = resolve_roles_file(roles_file)
     ppath = resolve_permissions_file(permissions_file)
 
-    data = load_permissions(ppath)
-    data.setdefault("permissions", {})
-    data["permissions"].setdefault(
-        MANAGE_PERMISSION_KEY,
-        {"label": MANAGE_PERMISSION_LABEL, "allowed_role_ids": []},
-    )
-    save_permissions(ppath, data)
+    _ensure_manage_permission_record(ppath)
 
+    # 1) Ensure an Owner exists on first run (requires Tk)
     if not roles_exist(rpath):
         owner = _owner_first_run_setup(rpath, title=title)
         if owner is None:
             return False
         role_id = OWNER_ID
+
+    # 2) Determine current role_id (maybe popup login / reauth)
     else:
         if require_reauth and not _only_owner_exists(rpath):
-            auth_root = tk.Tk()
-            auth_root.withdraw()
-            try:
-                u = simpledialog.askstring("Admin Panel", "Username (role name):", parent=auth_root)
-                if u is None:
-                    return False
-                p = simpledialog.askstring("Admin Panel", "Password:", parent=auth_root, show="*")
-                if p is None:
-                    return False
-                role = authenticate(u.strip(), p, roles_file=rpath)
-                _set_session(role)
-                role_id = role.id
-            except ValueError as e:
-                messagebox.showerror("Authentication failed", str(e))
+            role_id = _popup_reauth(title="Admin Panel", roles_path=rpath)
+            if role_id is None:
                 return False
-            finally:
-                auth_root.destroy()
         else:
             role_id = current_role_id()
             if role_id is None:
@@ -73,7 +102,7 @@ def open_admin_panel(
                     return False
                 role_id = role.id
 
-    # Owner never blocked
+    # 3) Permission gate (Owner always allowed)
     if role_id != OWNER_ID:
         ok = check_permission_for_role_id(
             role_id,
@@ -84,64 +113,53 @@ def open_admin_panel(
         if not ok:
             return False
 
-    # ---- UI dispatch (UI ONLY). Keep all auth/permission logic above unchanged. ----
-    embedded = (mode == "embed")
+    # 4) UI dispatch
+    embedded = mode == "embed"
     ui_norm = (ui or "tk").strip().lower()
 
     if ui_norm in ("ctk", "customtkinter"):
-        from .admin_ui_ctk import show_admin_panel_ctk  # must exist
+        from .admin_ui_ctk import show_admin_panel_ctk
 
         try:
-            return show_admin_panel_ctk(
-                rpath=rpath,
-                ppath=ppath,
-                title=title,
-                embedded=embedded,
-                parent=parent,
-            )
-        except ImportError:
-            # Missing optional dependency should be loud and clear.
-            raise
+            return show_admin_panel_ctk(rpath=rpath, ppath=ppath, title=title, embedded=embedded, parent=parent)
         except Exception:
-            # If embedding fails for any reason, silently fallback to popup (your rule).
             if embedded:
-                return show_admin_panel_ctk(
-                    rpath=rpath,
-                    ppath=ppath,
-                    title=title,
-                    embedded=False,
-                    parent=None,
-                )
+                return show_admin_panel_ctk(rpath=rpath, ppath=ppath, title=title, embedded=False, parent=None)
             raise
 
     if ui_norm in ("qt", "pyside6", "pyside", "qt6"):
-        from .admin_ui_qt import show_admin_panel_pyside6  # must exist
+        from .admin_ui_qt import show_admin_panel_pyside6
 
         try:
-            return show_admin_panel_pyside6(
-                rpath=rpath,
-                ppath=ppath,
-                title=title,
-                embedded=embedded,
-                parent=parent,
-            )
-        except ImportError:
-            raise
+            return show_admin_panel_pyside6(rpath=rpath, ppath=ppath, title=title, embedded=embedded, parent=parent)
         except Exception:
             if embedded:
-                return show_admin_panel_pyside6(
-                    rpath=rpath,
-                    ppath=ppath,
-                    title=title,
-                    embedded=False,
-                    parent=None,
-                )
+                return show_admin_panel_pyside6(rpath=rpath, ppath=ppath, title=title, embedded=False, parent=None)
             raise
 
+    # Default: Tk
+    return _show_admin_panel_tk(
+        rpath=rpath,
+        ppath=ppath,
+        title=title,
+        mode=mode,
+        parent=parent,
+        role_id=role_id,
+    )
+
+
+def _show_admin_panel_tk(*, rpath: str, ppath: str, title: str, mode: str, parent, role_id: int) -> bool:
+    """Tkinter implementation of the admin panel."""
+    import tkinter as tk
+    from tkinter import messagebox, simpledialog, ttk
+
+    from .auth import add_role, delete_role, edit_role, get_roles
+    from .validators import PermissionsValidationError, validate_permissions_data
+
+    # ---- UI root ----
     if mode == "embed":
         if parent is None:
             raise ValueError("Embed mode requires parent=...")
-
         root = ttk.Frame(parent)
         root.pack(fill="both", expand=True)
     else:
@@ -152,7 +170,7 @@ def open_admin_panel(
     nb = ttk.Notebook(root)
     nb.pack(fill="both", expand=True, padx=8, pady=8)
 
-    # Roles tab (owner hidden)
+    # ---------------- Roles tab (owner hidden) ----------------
     roles_frame = ttk.Frame(nb)
     nb.add(roles_frame, text="Roles")
 
@@ -162,7 +180,7 @@ def open_admin_panel(
     roles_btns = ttk.Frame(roles_frame)
     roles_btns.pack(side="right", fill="y", padx=(4, 8), pady=8)
 
-    def refresh_roles():
+    def refresh_roles() -> None:
         roles_list.delete(0, tk.END)
         for r in get_roles(roles_file=rpath):
             if r.id == OWNER_ID:
@@ -179,14 +197,14 @@ def open_admin_panel(
         except Exception:
             return None
 
-    def reset_owner_password():
+    def reset_owner_password() -> None:
         if role_id != OWNER_ID:
             messagebox.showerror("Access denied", "Only the Owner can reset the Owner password.")
             return
-        pw1 = simpledialog.askstring("owner password", "New owner password:", parent=root, show="*")
+        pw1 = simpledialog.askstring("Owner password", "New owner password:", parent=root, show="*")
         if pw1 is None or pw1 == "":
             return
-        pw2 = simpledialog.askstring("owner password", "Confirm owner password:", parent=root, show="*")
+        pw2 = simpledialog.askstring("Owner password", "Confirm owner password:", parent=root, show="*")
         if pw2 is None:
             return
         if pw1 != pw2:
@@ -194,11 +212,11 @@ def open_admin_panel(
             return
         try:
             edit_role(OWNER_ID, new_password=pw1, roles_file=rpath)
-            messagebox.showinfo("Success", "owner password updated.")
+            messagebox.showinfo("Success", "Owner password updated.")
         except Exception as e:
             messagebox.showerror("Error", str(e))
 
-    def add_role_ui():
+    def add_role_ui() -> None:
         try:
             rid = simpledialog.askinteger("Add Role", "Role ID (integer):", parent=root, minvalue=1)
             if rid is None:
@@ -221,15 +239,20 @@ def open_admin_panel(
         except Exception as e:
             messagebox.showerror("Error", str(e))
 
-    def edit_role_ui():
+    def edit_role_ui() -> None:
         rid = selected_role_id()
         if rid is None:
             messagebox.showinfo("Select role", "Please select a role.")
             return
         try:
-            new_name = simpledialog.askstring("Edit Role", "New role name (leave blank to keep):", parent=root)
+            new_name = simpledialog.askstring(
+                "Edit Role",
+                "New role name (leave blank to keep):",
+                parent=root,
+            )
             if new_name is not None and new_name.strip() == "":
                 new_name = None
+
             reset = messagebox.askyesno("Reset password", "Reset password for this role?")
             new_pw = None
             if reset:
@@ -243,13 +266,14 @@ def open_admin_panel(
                     messagebox.showerror("Mismatch", "Passwords do not match.")
                     return
                 new_pw = pw1
+
             edit_role(rid, new_name=new_name, new_password=new_pw, roles_file=rpath)
             refresh_roles()
             messagebox.showinfo("Success", "Role updated.")
         except Exception as e:
             messagebox.showerror("Error", str(e))
 
-    def delete_role_ui():
+    def delete_role_ui() -> None:
         rid = selected_role_id()
         if rid is None:
             messagebox.showinfo("Select role", "Please select a role.")
@@ -270,7 +294,7 @@ def open_admin_panel(
     ttk.Button(roles_btns, text="Edit", command=edit_role_ui).pack(fill="x", pady=3)
     ttk.Button(roles_btns, text="Delete", command=delete_role_ui).pack(fill="x", pady=3)
 
-    # Permissions tab (owner hidden; owner always implicitly allowed)
+    # ---------------- Permissions tab ----------------
     perms_frame = ttk.Frame(nb)
     nb.add(perms_frame, text="Permissions")
 
@@ -289,20 +313,19 @@ def open_admin_panel(
     status = ttk.Label(right, text="Select a permission to edit.")
     status.pack(fill="x", padx=6, pady=(0, 6))
 
-    vars_by_role: Dict[int, tk.IntVar] = {}
+    vars_by_role: dict[int, tk.IntVar] = {}
     current_key: Optional[str] = None
     perm_keys: list[str] = []
 
-    def refresh_permissions_list():
+    def refresh_permissions_list() -> None:
         perms_list.delete(0, tk.END)
         perm_keys.clear()
-
         reg = list_registered_permissions()
         for key, meta in sorted(reg.items(), key=lambda kv: kv[0]):
             perm_keys.append(key)
             perms_list.insert(tk.END, meta.label)
 
-    def load_roles_checkboxes(selected_key: str):
+    def load_roles_checkboxes(selected_key: str) -> None:
         nonlocal current_key
         current_key = selected_key
 
@@ -318,23 +341,30 @@ def open_admin_panel(
             messagebox.showerror("Invalid permissions file", str(e))
             return
 
-        allowed = set()
+        allowed: set[int] = set()
         rec = data.get("permissions", {}).get(selected_key)
         if rec and isinstance(rec, dict):
             raw_allowed = rec.get("allowed_role_ids", [])
-            allowed = set(int(x) for x in raw_allowed if isinstance(x, (int, str)) and str(x).strip().isdigit())
-
+            allowed = set(
+                int(x)
+                for x in raw_allowed
+                if isinstance(x, (int, str)) and str(x).strip().isdigit()
+            )
 
         for r in roles:
             v = tk.IntVar(master=root, value=1 if r.id in allowed else 0)
             vars_by_role[r.id] = v
-            ttk.Checkbutton(roles_checks_frame, text=f"{r.id} | {r.name}", variable=v).pack(anchor="w", padx=8, pady=2)
+            ttk.Checkbutton(
+                roles_checks_frame,
+                text=f"{r.id} | {r.name}",
+                variable=v,
+            ).pack(anchor="w", padx=8, pady=2)
 
         reg = list_registered_permissions()
         label = reg.get(selected_key).label if selected_key in reg else selected_key
         status.config(text=f"Editing: {label}")
 
-    def on_select_permission(_event=None):
+    def on_select_permission(_event=None) -> None:
         sel = perms_list.curselection()
         if not sel:
             return
@@ -344,7 +374,7 @@ def open_admin_panel(
         key = perm_keys[idx]
         load_roles_checkboxes(key)
 
-    def save_current_permission():
+    def save_current_permission() -> None:
         if not current_key:
             messagebox.showinfo("Select permission", "Select a permission first.")
             return
@@ -371,6 +401,7 @@ def open_admin_panel(
 
     refresh_roles()
     refresh_permissions_list()
+
     if mode != "embed":
         root.mainloop()
     return True
