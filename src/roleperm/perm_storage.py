@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import json
-import os
 from typing import Any, Dict, List, Optional
 
-from .storage_utils import atomic_write_json, backup_file, ensure_parent_dir
+from .storage_utils import atomic_write_json, load_json_with_recovery
 
 DEFAULT_SCHEMA_VERSION = 1
 
@@ -14,39 +12,26 @@ def _default_permissions() -> Dict[str, Any]:
 
 
 def load_permissions(path: str) -> Dict[str, Any]:
-    ensure_parent_dir(path)
+    """
+    Load permissions dict. If missing/empty/invalid JSON/bad root, recover safely.
 
-    if not os.path.exists(path):
-        atomic_write_json(path, _default_permissions())
-        return _default_permissions()
-
-    try:
-        if os.path.getsize(path) == 0:
-            backup_file(path, suffix="empty")
-            atomic_write_json(path, _default_permissions())
-            return _default_permissions()
-    except OSError:
-        pass
-
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            raw = json.load(f)
-    except json.JSONDecodeError:
-        backup_file(path)
-        atomic_write_json(path, _default_permissions())
-        return _default_permissions()
-    except Exception:
-        return _default_permissions()
-
-    if not isinstance(raw, dict):
-        backup_file(path, suffix="badroot")
-        atomic_write_json(path, _default_permissions())
-        return _default_permissions()
+    Ensures:
+      - schema_version exists
+      - permissions exists and is a dict
+    """
+    raw = load_json_with_recovery(
+        path,
+        default_factory=_default_permissions,
+        expected_type=dict,
+        empty_suffix="empty",
+    )
 
     raw.setdefault("schema_version", DEFAULT_SCHEMA_VERSION)
     raw.setdefault("permissions", {})
-    if not isinstance(raw["permissions"], dict):
+
+    if not isinstance(raw.get("permissions"), dict):
         raw["permissions"] = {}
+
     return raw
 
 

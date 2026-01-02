@@ -1,44 +1,84 @@
+"""
+roleperm public API.
+
+This module re-exports the most commonly used functions/classes so users can:
+    import roleperm as rp
+
+Web integrations typically use:
+- rp.set_current_role(...)  (per-request)
+- rp.require_permission(...) / rp.check_permission(...)
+"""
+
 from __future__ import annotations
 
 import json
 
-from .admin_ui import MANAGE_PERMISSION_KEY, MANAGE_PERMISSION_LABEL, open_admin_panel
+from .config import configure, get_paths
+
 from .auth import (
+    OWNER_ID,
+    OWNER_NAME,
     Role,
-    add_role,
     authenticate,
+    login_and_set_session,
+    set_current_role,
+    session_as,
+    add_role,
+    edit_role,
+    delete_role,
+    get_roles,
     current_role,
     current_role_id,
     current_username,
-    delete_role,
-    edit_role,
-    get_roles,
     logout,
 )
-from .config import configure, get_paths
-from .constants import OWNER_ID, OWNER_NAME
+
+# Tk-based login popup (desktop only; safe to import because tkinter is imported lazily inside ui.py)
+from .ui import login
+
 from .permissions import (
-    check_permission_for_role_id,
-    list_registered_permissions,
+    # registry + decorators
     permission_key,
     permission_required,
     role_required,
+    list_registered_permissions,
+    # checks/guards (web-friendly)
+    check_permission_for_role_id,
+    check_permission,
+    require_login,
+    require_permission,
+    # exceptions
+    NotAuthenticated,
+    PermissionDenied,
 )
-from .ui import login
+
+from .admin_ui import (
+    MANAGE_PERMISSION_KEY,
+    MANAGE_PERMISSION_LABEL,
+    open_admin_panel,
+)
+
 from .validators import (
-    PermissionsValidationError,
     RolesValidationError,
-    validate_permissions_data,
+    PermissionsValidationError,
     validate_roles_data,
+    validate_permissions_data,
 )
 
 __version__ = "0.2.4"
 
 __all__ = [
+    # config
     "configure",
     "get_paths",
+    # auth/session
+    "OWNER_ID",
+    "OWNER_NAME",
     "Role",
     "authenticate",
+    "login_and_set_session",
+    "set_current_role",
+    "session_as",
     "login",
     "logout",
     "current_role",
@@ -48,16 +88,22 @@ __all__ = [
     "edit_role",
     "delete_role",
     "get_roles",
-    "role_required",
+    # permissions
     "permission_key",
     "permission_required",
-    "check_permission_for_role_id",
+    "role_required",
     "list_registered_permissions",
+    "check_permission_for_role_id",
+    "check_permission",
+    "require_login",
+    "require_permission",
+    "NotAuthenticated",
+    "PermissionDenied",
+    # admin
     "open_admin_panel",
     "MANAGE_PERMISSION_KEY",
     "MANAGE_PERMISSION_LABEL",
-    "OWNER_ID",
-    "OWNER_NAME",
+    # validators
     "RolesValidationError",
     "PermissionsValidationError",
     "validate_roles_file",
